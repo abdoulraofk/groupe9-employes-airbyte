@@ -1,0 +1,84 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: rh_mysql_source
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_pwd}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-rh_source}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root_pwd}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  postgres:
+    image: postgres:16
+    container_name: rh_postgres_target
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rh_target}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_pwd}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-postgres}", "-d", "${POSTGRES_DB:-rh_target}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: ./api
+    container_name: rh_api
+    restart: unless-stopped
+    environment:
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DB: ${POSTGRES_DB:-rh_target}
+      PG_USER: api_reader
+      PG_PASSWORD: ${API_READER_PASSWORD:-api_reader_pwd}
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Repli de synchronisation (voir scripts/sync_mysql_to_postgres.py) : a utiliser
+  # pour developper/tester l'API et le scenario de bout en bout sans la pile Airbyte
+  # complete. La synchronisation "officielle" du projet reste Airbyte, configuree
+  # separement (voir airbyte/README.md) : ne pas lancer les deux a la fois sur le
+  # meme schema cible.
+  sync-fallback:
+    build: ./scripts
+    container_name: rh_sync_fallback
+    restart: unless-stopped
+    profiles: ["dev-sync"]
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_READER_USER:-airbyte_reader}
+      MYSQL_PASSWORD: ${MYSQL_READER_PASSWORD:-airbyte_reader_pwd}
+      MYSQL_DB: ${MYSQL_DATABASE:-rh_source}
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_USER: ${POSTGRES_USER:-postgres}
+      PG_PASSWORD: ${POSTGRES_PASSWORD:-postgres_pwd}
+      PG_DB: ${POSTGRES_DB:-rh_target}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
+  postgres_data:
