@@ -1,0 +1,187 @@
+openapi: 3.0.3
+info:
+  title: API de consultation des employes (Groupe 9 - theme 15)
+  description: >
+    API REST en lecture seule exposant les donnees employes/services/fonctions
+    repliquees de MySQL vers PostgreSQL via Airbyte. Aucune route d'ecriture.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:5000/api/v1
+paths:
+  /health:
+    get:
+      summary: Etat de l'API et de la connexion a la base
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /employes:
+    get:
+      summary: Liste paginee des employes, avec filtres
+      parameters:
+        - in: query
+          name: matricule
+          schema: { type: string }
+          description: Prefixe du matricule recherche
+        - in: query
+          name: service
+          schema: { type: string }
+          description: Code du service (ex. DSI)
+        - in: query
+          name: fonction
+          schema: { type: string }
+          description: Code de la fonction (ex. DEV)
+        - in: query
+          name: nom
+          schema: { type: string }
+          description: Sous-chaine recherchee dans nom ou prenom
+        - in: query
+          name: actif
+          schema: { type: string, enum: ["0", "1"] }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1, minimum: 1 }
+        - in: query
+          name: per_page
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+      responses:
+        "200":
+          description: Liste paginee
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Employe" }
+                  page: { type: integer }
+                  per_page: { type: integer }
+                  total: { type: integer }
+                  total_pages: { type: integer }
+        "400":
+          description: Parametres de pagination ou de filtre invalides
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Erreur" }
+
+  /employes/{matricule}:
+    get:
+      summary: Fiche d'un employe
+      parameters:
+        - in: path
+          name: matricule
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Employe" }
+        "404":
+          description: Employe introuvable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Erreur" }
+
+  /services:
+    get:
+      summary: Liste des services
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Service" }
+
+  /fonctions:
+    get:
+      summary: Liste des fonctions
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Fonction" }
+
+  /meta/freshness:
+    get:
+      summary: Indicateur de fraicheur de la derniere synchronisation, par table
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  checked_at: { type: string, format: date-time }
+                  tables:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        last_sync_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        age_seconds:
+                          type: number
+                          nullable: true
+
+components:
+  schemas:
+    Service:
+      type: object
+      properties:
+        id: { type: integer }
+        code: { type: string }
+        nom: { type: string }
+        updated_at: { type: string, format: date-time }
+
+    Fonction:
+      type: object
+      properties:
+        id: { type: integer }
+        code: { type: string }
+        libelle: { type: string }
+        updated_at: { type: string, format: date-time }
+
+    Employe:
+      type: object
+      properties:
+        matricule: { type: string }
+        nom: { type: string }
+        prenom: { type: string }
+        email: { type: string }
+        date_embauche: { type: string, format: date }
+        actif: { type: boolean }
+        updated_at: { type: string, format: date-time }
+        service_code: { type: string }
+        service_nom: { type: string }
+        fonction_code: { type: string }
+        fonction_libelle: { type: string }
+
+    Erreur:
+      type: object
+      properties:
+        error: { type: string }
