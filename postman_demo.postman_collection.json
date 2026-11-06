@@ -1,0 +1,490 @@
+{
+  "info": {
+    "_postman_id": "e9b8f7a0-6a3b-4b1e-9b0e-3d7c2a6f4c2d",
+    "name": "RH Demo - Scenario bout en bout (MySQL -> Airbyte -> PostgreSQL -> API)",
+    "description": "Rejoue tests/scenario_bout_en_bout.md : chaine MySQL (source) -> Airbyte (replication) -> PostgreSQL (cible) -> API Flask (lecture seule). Suivre les dossiers dans l'ordre 0 a 6 pendant la demo.\n\nVariables a verifier avant de lancer (Collection > Variables) :\n- base_url, airbyte_url : adapter si les ports/hotes changent.\n- airbyte_client_id / airbyte_client_secret : donnes par `abctl local credentials`.\n- airbyte_connection_id : id de la connexion `rh_source_to_rh_target` (donne par `configure_airbyte.py`).\n- matricule : employe utilise pour la demo (EMP0001 par defaut).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:5000/api/v1", "type": "string" },
+    { "key": "airbyte_url", "value": "http://localhost:8000", "type": "string" },
+    { "key": "airbyte_client_id", "value": "9609b315-291a-4822-8098-7aeb1577575e", "type": "string" },
+    { "key": "airbyte_client_secret", "value": "gNpYoSSj1xR7M3qdfRNPVyeUPV3lsZZx", "type": "secret" },
+    { "key": "airbyte_connection_id", "value": "c3af8f86-0726-4dea-abd9-4bb902481cb7", "type": "string" },
+    { "key": "airbyte_token", "value": "", "type": "secret" },
+    { "key": "airbyte_job_id", "value": "", "type": "string" },
+    { "key": "matricule", "value": "EMP0001", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "0. Sante",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status = ok\", () => pm.expect(pm.response.json().status).to.eql(\"ok\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1. Donnees presentes apres synchronisation initiale",
+      "item": [
+        {
+          "name": "GET /employes/{{matricule}}",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/employes/{{matricule}}",
+              "host": ["{{base_url}}"],
+              "path": ["employes", "{{matricule}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"a les champs attendus\", () => {",
+                  "  pm.expect(body).to.have.all.keys('matricule','nom','prenom','email','date_embauche','actif','updated_at','service_code','service_nom','fonction_code','fonction_libelle');",
+                  "});",
+                  "console.log('nom actuel =', body.nom, '| service =', body.service_code, '| fonction =', body.fonction_code);",
+                  "console.log('Attendu avant toute modification (etape 3) : nom=KABORE, service_code=DSI, fonction_code=DEV');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Recherche par matricule, service, fonction",
+      "item": [
+        {
+          "name": "GET /employes?matricule=EMP00",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/employes?matricule=EMP00",
+              "host": ["{{base_url}}"],
+              "path": ["employes"],
+              "query": [{ "key": "matricule", "value": "EMP00" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"reponse paginee\", () => pm.expect(body).to.have.all.keys('data','page','per_page','total','total_pages'));",
+                  "console.log('total pour prefixe EMP00 =', body.total, '(attendu dans le jeu de demo : 30)');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /employes?service=FIN",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/employes?service=FIN",
+              "host": ["{{base_url}}"],
+              "path": ["employes"],
+              "query": [{ "key": "service", "value": "FIN" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"tous les resultats sont du service FIN\", () => {",
+                  "  body.data.forEach(e => pm.expect(e.service_code).to.eql('FIN'));",
+                  "});",
+                  "console.log('employes FIN =', body.data.length);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /employes?fonction=COMM",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/employes?fonction=COMM",
+              "host": ["{{base_url}}"],
+              "path": ["employes"],
+              "query": [{ "key": "fonction", "value": "COMM" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"tous les resultats sont de la fonction COMM\", () => {",
+                  "  body.data.forEach(e => pm.expect(e.fonction_code).to.eql('COMM'));",
+                  "});",
+                  "console.log('employes COMM =', body.data.length);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /employes?service=FIN&nom=sanou",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/employes?service=FIN&nom=sanou",
+              "host": ["{{base_url}}"],
+              "path": ["employes"],
+              "query": [
+                { "key": "service", "value": "FIN" },
+                { "key": "nom", "value": "sanou" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"exactement un resultat : SANOU\", () => {",
+                  "  pm.expect(body.data).to.have.lengthOf(1);",
+                  "  pm.expect(body.data[0].nom.toUpperCase()).to.eql('SANOU');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /services",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/services", "host": ["{{base_url}}"], "path": ["services"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test(\"200 OK\", () => pm.response.to.have.status(200));"] }
+            }
+          ]
+        },
+        {
+          "name": "GET /fonctions",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/fonctions", "host": ["{{base_url}}"], "path": ["fonctions"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test(\"200 OK\", () => pm.response.to.have.status(200));"] }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Avant synchronisation (apres modification MySQL)",
+      "item": [
+        {
+          "name": "0. (A faire manuellement) UPDATE cote MySQL",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] },
+            "description": "Pas un appel HTTP : executer avant de continuer, dans un terminal, depuis le dossier du projet :\n\n```bash\ndocker exec -it rh_mysql_source mysql -uroot -p\"root_pwd\" -e \\\n  \"UPDATE rh_source.employes SET nom='KABORE-TRAORE' WHERE matricule='EMP0001';\"\n```\n\nCette requete ne fait que revalider que l'API repond, afin de garder cette etape dans la collection ; l'action reelle (UPDATE MySQL) se fait en dehors de Postman."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test(\"200 OK\", () => pm.response.to.have.status(200));"] }
+            }
+          ]
+        },
+        {
+          "name": "GET /employes/{{matricule}} (doit encore montrer l'ancienne valeur)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/employes/{{matricule}}",
+              "host": ["{{base_url}}"],
+              "path": ["employes", "{{matricule}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "console.log('nom renvoye par l API =', body.nom);",
+                  "console.log('Attendu ICI : encore KABORE (la synchronisation n a pas encore tourne). Si deja KABORE-TRAORE, une sync a eu lieu entre temps.');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /meta/freshness (age_seconds eleve)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/meta/freshness", "host": ["{{base_url}}"], "path": ["meta", "freshness"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "console.log('age_seconds employes =', body.tables.employes.age_seconds);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Declenchement de la synchronisation Airbyte",
+      "item": [
+        {
+          "name": "POST token (client_id/client_secret -> access_token)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{airbyte_url}}/api/public/v1/applications/token",
+              "host": ["{{airbyte_url}}"],
+              "path": ["api", "public", "v1", "applications", "token"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_id\": \"{{airbyte_client_id}}\",\n  \"client_secret\": \"{{airbyte_client_secret}}\"\n}"
+            },
+            "description": "client_id/client_secret donnes par `abctl local credentials`. Le token est valable 15 min (expires_in=900) ; relancer cette requete s'il expire pendant la demo."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('airbyte_token', body.access_token);",
+                  "pm.test(\"token recupere\", () => pm.expect(body.access_token).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST jobs (declenche la sync)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{airbyte_token}}" }
+            ],
+            "url": {
+              "raw": "{{airbyte_url}}/api/public/v1/jobs",
+              "host": ["{{airbyte_url}}"],
+              "path": ["api", "public", "v1", "jobs"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"connectionId\": \"{{airbyte_connection_id}}\",\n  \"jobType\": \"sync\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('airbyte_job_id', body.jobId);",
+                  "console.log('job demarre, id =', body.jobId, '| status =', body.status);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET jobs/{{airbyte_job_id}} (statut - relancer jusqu'a succeeded)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{airbyte_token}}" }],
+            "url": {
+              "raw": "{{airbyte_url}}/api/public/v1/jobs/{{airbyte_job_id}}",
+              "host": ["{{airbyte_url}}"],
+              "path": ["api", "public", "v1", "jobs", "{{airbyte_job_id}}"]
+            },
+            "description": "A rejouer (bouton Send) toutes les 10-15 s pendant la demo jusqu'a ce que `status` passe a `succeeded` (ou `incomplete` : voir note dans airbyte/README.md -- les donnees arrivent generalement malgre ce statut sur un cluster kind local sous contrainte de ressources, verifier dans ce cas avec le dossier 5)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "console.log('status =', body.status, '| rowsSynced =', body.rowsSynced, '| duration =', body.duration);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Verification de la propagation",
+      "item": [
+        {
+          "name": "GET /employes/{{matricule}} (doit montrer la nouvelle valeur)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/employes/{{matricule}}",
+              "host": ["{{base_url}}"],
+              "path": ["employes", "{{matricule}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "console.log('nom apres sync =', body.nom, '(attendu : KABORE-TRAORE)');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /meta/freshness (age_seconds proche de 0)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/meta/freshness", "host": ["{{base_url}}"], "path": ["meta", "freshness"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "console.log('age_seconds employes apres sync =', body.tables.employes.age_seconds, '(attendu : proche de 0)');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. API strictement en lecture seule (doit echouer)",
+      "item": [
+        {
+          "name": "POST /employes (refuse)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/employes", "host": ["{{base_url}}"], "path": ["employes"] },
+            "body": { "mode": "raw", "raw": "{}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"404 ou 405 (ecriture refusee)\", () => {",
+                  "  pm.expect([404, 405]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT /employes/{{matricule}} (refuse)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/employes/{{matricule}}",
+              "host": ["{{base_url}}"],
+              "path": ["employes", "{{matricule}}"]
+            },
+            "body": { "mode": "raw", "raw": "{}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"404 ou 405 (ecriture refusee)\", () => {",
+                  "  pm.expect([404, 405]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE /employes/{{matricule}} (refuse)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/employes/{{matricule}}",
+              "host": ["{{base_url}}"],
+              "path": ["employes", "{{matricule}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"404 ou 405 (ecriture refusee)\", () => {",
+                  "  pm.expect([404, 405]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
