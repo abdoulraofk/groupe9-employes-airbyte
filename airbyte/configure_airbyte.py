@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Configuration reproductible de la connexion Airbyte rh_source (MySQL) -> rh_target
-(PostgreSQL), via l'API Config d'Airbyte OSS (/api/v1/...).
+(PostgreSQL), via l'API publique d'Airbyte OSS (/api/public/v1/...).
 
 Remplace la configuration manuelle via l'UI decrite dans README.md : ce script est
 le mecanisme demande par la clause "installation reproductible" du cahier des
@@ -11,150 +11,159 @@ d'installation (abctl, cf. README.md).
 Idempotent : recherche une source/destination/connexion du meme nom avant d'en
 creer une nouvelle, pour pouvoir etre rejoue sans dupliquer la configuration.
 
+Note sur l'API : l'ancienne API Config (/api/v1/...) utilisee par les versions
+anciennes d'Airbyte OSS est desormais reservee a l'usage interne du serveur et
+refuse les jetons d'application (403 Forbidden). Ce script utilise donc l'API
+publique (/api/public/v1/...), authentifiee par un jeton OAuth client_id/
+client_secret recupere via `abctl local credentials`.
+
 Usage :
     python configure_airbyte.py --airbyte-url http://localhost:8000 \
         --mysql-host <host> --mysql-port 3306 \
-        --postgres-host <host> --postgres-port 5432
+        --postgres-host <host> --postgres-port 5432 \
+        --client-id <client_id> --client-secret <client_secret>
 """
 import argparse
 import sys
+import time
 
 import requests
 
+_ACCESS_TOKEN = None
 
-def api_post(base_url, path, payload):
-    resp = requests.post(f"{base_url}/api/v1{path}", json=payload, timeout=30)
+# Connecteurs officiels Airbyte (identifiants stables du catalogue public).
+MYSQL_DEFINITION_ID = "435bb9a5-7887-4809-aa58-28c27df0d7ad"
+POSTGRES_DEFINITION_ID = "25c5221d-dce2-4163-ade9-739ef790f503"
+
+
+def get_access_token(base_url, client_id, client_secret):
+    resp = requests.post(
+        f"{base_url}/api/public/v1/applications/token",
+        json={"client_id": client_id, "client_secret": client_secret},
+        timeout=30,
+    )
     resp.raise_for_status()
-    return resp.json()
+    return resp.json()["access_token"]
 
 
-def find_by_name(base_url, list_path, workspace_id, name, key="name"):
-    resp = api_post(base_url, list_path, {"workspaceId": workspace_id})
-    for item in resp.get(list_path.rsplit("/", 1)[-1] + "s", []) or resp.get("sources", []) or resp.get("destinations", []):
-        if item.get(key) == name:
-            return item
-    return None
+def api(base_url, method, path, payload=None, params=None, timeout=30):
+    headers = {"Authorization": f"Bearer {_ACCESS_TOKEN}"}
+    resp = requests.request(
+        method, f"{base_url}/api/public/v1{path}",
+        json=payload, params=params, headers=headers, timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.json() if resp.content else None
 
 
 def get_workspace_id(base_url):
-    resp = api_post(base_url, "/workspaces/list", {})
-    workspaces = resp["workspaces"]
+    resp = api(base_url, "GET", "/workspaces")
+    workspaces = resp["data"]
     if not workspaces:
         sys.exit("Aucun workspace Airbyte trouve. Terminer l'assistant d'installation dans l'UI d'abord.")
     return workspaces[0]["workspaceId"]
 
 
-def get_source_definition_id(base_url, name_contains):
-    resp = api_post(base_url, "/source_definitions/list", {})
-    for d in resp["sourceDefinitions"]:
-        if name_contains.lower() in d["name"].lower():
-            return d["sourceDefinitionId"]
-    sys.exit(f"Definition de source introuvable pour '{name_contains}'")
-
-
-def get_destination_definition_id(base_url, name_contains):
-    resp = api_post(base_url, "/destination_definitions/list", {})
-    for d in resp["destinationDefinitions"]:
-        if name_contains.lower() in d["name"].lower():
-            return d["destinationDefinitionId"]
-    sys.exit(f"Definition de destination introuvable pour '{name_contains}'")
-
-
 def ensure_source(base_url, workspace_id, args):
-    existing = api_post(base_url, "/sources/list", {"workspaceId": workspace_id})
-    for s in existing.get("sources", []):
+    existing = api(base_url, "GET", "/sources", params={"workspaceIds": workspace_id})
+    for s in existing["data"]:
         if s["name"] == "rh_source_mysql":
             return s["sourceId"]
 
-    definition_id = get_source_definition_id(base_url, "MySQL")
     payload = {
-        "workspaceId": workspace_id,
         "name": "rh_source_mysql",
-        "sourceDefinitionId": definition_id,
-        "connectionConfiguration": {
+        "workspaceId": workspace_id,
+        "configuration": {
+            "sourceType": "mysql",
             "host": args.mysql_host,
             "port": args.mysql_port,
             "database": args.mysql_db,
             "username": args.mysql_user,
             "password": args.mysql_password,
             "replication_method": {"method": "STANDARD"},
-            "ssl": False,
         },
     }
-    created = api_post(base_url, "/sources/create", payload)
+    created = api(base_url, "POST", "/sources", payload)
     return created["sourceId"]
 
 
 def ensure_destination(base_url, workspace_id, args):
-    existing = api_post(base_url, "/destinations/list", {"workspaceId": workspace_id})
-    for d in existing.get("destinations", []):
+    existing = api(base_url, "GET", "/destinations", params={"workspaceIds": workspace_id})
+    for d in existing["data"]:
         if d["name"] == "rh_target_postgres":
             return d["destinationId"]
 
-    definition_id = get_destination_definition_id(base_url, "Postgres")
     payload = {
-        "workspaceId": workspace_id,
         "name": "rh_target_postgres",
-        "destinationDefinitionId": definition_id,
-        "connectionConfiguration": {
+        "workspaceId": workspace_id,
+        "configuration": {
+            "destinationType": "postgres",
             "host": args.postgres_host,
             "port": args.postgres_port,
             "database": args.postgres_db,
             "schema": "public",
             "username": args.postgres_user,
             "password": args.postgres_password,
-            "ssl": False,
+            "ssl_mode": {"mode": "disable"},
         },
     }
-    created = api_post(base_url, "/destinations/create", payload)
+    created = api(base_url, "POST", "/destinations", payload)
     return created["destinationId"]
 
 
-def discover_streams(base_url, source_id):
-    resp = api_post(base_url, "/sources/discover_schema", {"sourceId": source_id})
-    return resp["catalog"]
-
-
-def build_configured_catalog(catalog):
-    """Active employes/services/fonctions en Incremental|Deduped, cursor=updated_at."""
-    pk_by_stream = {
-        "employes": [["matricule"]],
-        "services": [["id"]],
-        "fonctions": [["id"]],
-    }
-    streams = []
-    for s in catalog["streams"]:
-        name = s["stream"]["name"]
-        if name not in pk_by_stream:
-            continue
-        s["config"]["syncMode"] = "incremental"
-        s["config"]["destinationSyncMode"] = "append_dedup"
-        s["config"]["cursorField"] = ["updated_at"]
-        s["config"]["primaryKey"] = pk_by_stream[name]
-        s["config"]["selected"] = True
-        streams.append(s)
-    return {"streams": streams}
-
-
-def ensure_connection(base_url, source_id, destination_id, catalog):
-    existing = api_post(base_url, "/connections/list", {"sourceId": source_id})
-    for c in existing.get("connections", []):
-        if c["name"] == "rh_source_to_rh_target":
+def find_connection(base_url, workspace_id, name):
+    existing = api(base_url, "GET", "/connections", params={"workspaceIds": workspace_id})
+    for c in existing["data"]:
+        if c["name"] == name:
             return c["connectionId"]
+    return None
+
+
+def ensure_connection(base_url, workspace_id, source_id, destination_id):
+    """Cree la connexion rh_source -> rh_target (Incremental | Deduped, cursor=updated_at).
+
+    La creation declenche une decouverte de schema reelle contre MySQL (cold start
+    du pod connecteur sur le cluster kind d'abctl : jusqu'a plusieurs minutes),
+    ce qui depasse souvent le delai de l'ingress nginx local (502 Bad Gateway cote
+    client) alors que la connexion est en realite creee cote serveur. On retente
+    donc la recherche par nom pendant quelques minutes avant d'abandonner.
+    """
+    name = "rh_source_to_rh_target"
+    existing_id = find_connection(base_url, workspace_id, name)
+    if existing_id:
+        return existing_id
 
     payload = {
+        "name": name,
         "sourceId": source_id,
         "destinationId": destination_id,
-        "name": "rh_source_to_rh_target",
-        "namespaceDefinition": "customformat",
+        "namespaceDefinition": "custom_format",
         "namespaceFormat": "public",
-        "status": "active",
-        "scheduleType": "basic",
-        "scheduleData": {"basicSchedule": {"units": 5, "timeUnit": "minutes"}},
-        "syncCatalog": build_configured_catalog(catalog),
+        "schedule": {"scheduleType": "manual"},
+        "configurations": {
+            "streams": [
+                {"name": "employes", "syncMode": "incremental_deduped_history",
+                 "primaryKey": [["matricule"]], "cursorField": ["updated_at"]},
+                {"name": "services", "syncMode": "incremental_deduped_history",
+                 "primaryKey": [["id"]], "cursorField": ["updated_at"]},
+                {"name": "fonctions", "syncMode": "incremental_deduped_history",
+                 "primaryKey": [["id"]], "cursorField": ["updated_at"]},
+            ],
+        },
     }
-    created = api_post(base_url, "/connections/create", payload)
-    return created["connectionId"]
+    try:
+        created = api(base_url, "POST", "/connections", payload, timeout=600)
+        return created["connectionId"]
+    except requests.exceptions.RequestException as exc:
+        print(f"Avertissement : la creation de la connexion a signale une erreur cote "
+              f"client ({exc}) ; nouvelle tentative de la retrouver par nom pendant "
+              f"5 minutes (le serveur Airbyte continue le traitement en arriere-plan).")
+        for _ in range(30):
+            time.sleep(10)
+            found_id = find_connection(base_url, workspace_id, name)
+            if found_id:
+                return found_id
+        sys.exit("La connexion n'a pas pu etre creee (ni retrouvee apres 5 minutes).")
 
 
 def main():
@@ -170,9 +179,15 @@ def main():
     parser.add_argument("--postgres-db", default="rh_target")
     parser.add_argument("--postgres-user", default="postgres")
     parser.add_argument("--postgres-password", default="postgres_pwd")
+    parser.add_argument("--client-id", required=True, help="cf. `abctl local credentials`")
+    parser.add_argument("--client-secret", required=True, help="cf. `abctl local credentials`")
     args = parser.parse_args()
 
     base_url = args.airbyte_url.rstrip("/")
+
+    global _ACCESS_TOKEN
+    _ACCESS_TOKEN = get_access_token(base_url, args.client_id, args.client_secret)
+
     workspace_id = get_workspace_id(base_url)
     print(f"Workspace : {workspace_id}")
 
@@ -182,11 +197,11 @@ def main():
     destination_id = ensure_destination(base_url, workspace_id, args)
     print(f"Destination PostgreSQL : {destination_id}")
 
-    catalog = discover_streams(base_url, source_id)
-    connection_id = ensure_connection(base_url, source_id, destination_id, catalog)
+    connection_id = ensure_connection(base_url, workspace_id, source_id, destination_id)
     print(f"Connexion rh_source -> rh_target : {connection_id}")
-    print("Configuration terminee. Declencher une synchronisation manuelle depuis "
-          "l'UI ou via POST /api/v1/connections/sync pour le premier chargement.")
+    print("Configuration terminee. Schedule = manuel : declencher une synchronisation "
+          "depuis l'UI, ou via POST /api/public/v1/jobs "
+          '{"connectionId": "...", "jobType": "sync"}.')
 
 
 if __name__ == "__main__":

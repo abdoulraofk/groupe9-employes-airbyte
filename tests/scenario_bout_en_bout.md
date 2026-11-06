@@ -1,4 +1,5 @@
 # Scenario de bout en bout (exigence du cahier des charges : "un test de bout en
+
 # bout de la chaine principale du projet")
 
 Chaine testee : MySQL (source) -> Airbyte (replication) -> PostgreSQL (cible) ->
@@ -71,12 +72,12 @@ curl -s http://localhost:5000/api/v1/meta/freshness | jq '.tables.employes.age_s
 
 ## Resultat attendu (synthese)
 
-| Etape | Attendu |
-|---|---|
+| Etape                                    | Attendu                                                       |
+| ---------------------------------------- | ------------------------------------------------------------- |
 | Recherche par matricule/service/fonction | Filtres combinables, resultats corrects, pagination respectee |
-| Avant synchronisation | API renvoie encore l'ancienne valeur ; `age_seconds` eleve |
-| Apres synchronisation | API renvoie la nouvelle valeur ; `age_seconds` proche de 0 |
-| Operations d'ecriture (POST/PUT/DELETE) | Refusees (404/405) : l'API est strictement en lecture seule |
+| Avant synchronisation                    | API renvoie encore l'ancienne valeur ; `age_seconds` eleve  |
+| Apres synchronisation                    | API renvoie la nouvelle valeur ; `age_seconds` proche de 0  |
+| Operations d'ecriture (POST/PUT/DELETE)  | Refusees (404/405) : l'API est strictement en lecture seule   |
 
 Script automatisable equivalent (utilise le repli de synchronisation) :
 `tests/test_sync_scenario.py`.
